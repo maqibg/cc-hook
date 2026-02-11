@@ -1,4 +1,5 @@
 use std::process::Command;
+use crate::config::Config;
 
 pub fn notify(title: &str, message: &str) {
     let msg = if message.chars().count() > 200 {
@@ -14,18 +15,20 @@ pub fn notify(title: &str, message: &str) {
         .show();
 }
 
-/// 语音播报，不同事件不同文本
-pub fn speak(event: &str, notification_type: Option<&str>) {
+/// 语音播报，从配置读取文本
+pub fn speak(cfg: &Config, event: &str, notification_type: Option<&str>) {
+    if !cfg.voice_enable { return; }
     let text = match event {
-        "Stop" => "任务完成",
+        "Stop" => &cfg.voice_stop,
         "Notification" => match notification_type {
-            Some("permission_prompt") => "需要权限确认",
-            Some("idle_prompt") => "等待你的输入",
-            Some("elicitation_dialog") => "需要输入信息",
-            _ => "需要你的操作",
+            Some("permission_prompt") => &cfg.voice_permission,
+            Some("idle_prompt") => &cfg.voice_idle,
+            Some("elicitation_dialog") => &cfg.voice_elicitation,
+            _ => &cfg.voice_default,
         },
         _ => return,
     };
+    if text.is_empty() { return; }
     let script = format!(
         "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')"
     );

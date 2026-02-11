@@ -10,6 +10,7 @@ pub struct Channel {
     pub webhook_url: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct Config {
     pub debug: bool,
     pub min_duration: u64,
@@ -20,6 +21,12 @@ pub struct Config {
     pub ai_model: String,
     pub ai_max_words: usize,
     pub win_notify_enable: bool,
+    pub voice_enable: bool,
+    pub voice_stop: String,
+    pub voice_permission: String,
+    pub voice_idle: String,
+    pub voice_elicitation: String,
+    pub voice_default: String,
     pub channels: Vec<Channel>,
 }
 
@@ -104,6 +111,12 @@ impl Config {
             ai_model: env_or("AI_MODEL", "deepseek-chat"),
             ai_max_words: env_or("AI_MAX_WORDS", "500").parse().unwrap_or(500),
             win_notify_enable: env_or("WIN_NOTIFY_ENABLE", "true") != "false",
+            voice_enable: env_or("VOICE_ENABLE", "true") != "false",
+            voice_stop: env_or("VOICE_STOP", "任务完成"),
+            voice_permission: env_or("VOICE_PERMISSION", "需要权限确认"),
+            voice_idle: env_or("VOICE_IDLE", "等待你的输入"),
+            voice_elicitation: env_or("VOICE_ELICITATION", "需要输入信息"),
+            voice_default: env_or("VOICE_DEFAULT", "需要你的操作"),
             channels: parse_channels(),
         };
         if cfg.debug {

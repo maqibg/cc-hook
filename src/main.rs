@@ -65,11 +65,12 @@ async fn dispatch(cfg: &Config, client: &reqwest::Client, title: &str, summary: 
     if cfg.win_notify_enable {
         let t = title.to_string();
         let s = summary.to_string();
+        let voice_cfg = cfg.clone();
         let ev = event.to_string();
         let nt = notification_type.map(|s| s.to_string());
         tasks.push(tokio::spawn(async move {
             channels::windows::notify(&t, &s);
-            channels::windows::speak(&ev, nt.as_deref());
+            channels::windows::speak(&voice_cfg, &ev, nt.as_deref());
         }));
     }
 
