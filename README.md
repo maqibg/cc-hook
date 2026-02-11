@@ -73,6 +73,8 @@ cp .env.example target/release/.env
 | `AI_BASE_URL` | API 地址（自动补全 /v1） | `https://api.deepseek.com` |
 | `AI_MODEL` | 模型名 | `deepseek-chat` |
 | `AI_MAX_WORDS` | 摘要字数上限 | `500` |
+| `AI_SYSTEM_PROMPT` | AI 系统提示词（定义角色和格式） | 内置默认 |
+| `AI_USER_PROMPT` | AI 用户提示词（`{max_words}`/`{content}` 自动替换） | 内置默认 |
 
 **Windows 通知与语音：**
 
