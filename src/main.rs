@@ -59,13 +59,18 @@ fn now_time_str() -> String {
     format!("{:02}:{:02}", h, m)
 }
 
-async fn dispatch(cfg: &Config, client: &reqwest::Client, title: &str, summary: &str, raw: Option<&str>, extra: Option<&str>) {
+async fn dispatch(cfg: &Config, client: &reqwest::Client, title: &str, summary: &str, raw: Option<&str>, extra: Option<&str>, event: &str, notification_type: Option<&str>) {
     let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
     if cfg.win_notify_enable {
         let t = title.to_string();
         let s = summary.to_string();
-        tasks.push(tokio::spawn(async move { channels::windows::notify(&t, &s); }));
+        let ev = event.to_string();
+        let nt = notification_type.map(|s| s.to_string());
+        tasks.push(tokio::spawn(async move {
+            channels::windows::notify(&t, &s);
+            channels::windows::speak(&ev, nt.as_deref());
+        }));
     }
 
     for ch in &cfg.channels {
@@ -128,7 +133,7 @@ async fn handle_stop(cfg: &Config, input: &HookInput) {
     let extra = duration.map(|d| format!("耗时 {}s", d));
     // 原始输出截取前 500 字符
     let raw: String = content.trim().chars().take(500).collect();
-    dispatch(cfg, &proxy_client, &title, &summary, Some(&raw), extra.as_deref()).await;
+    dispatch(cfg, &proxy_client, &title, &summary, Some(&raw), extra.as_deref(), "Stop", None).await;
 }
 
 async fn handle_notification(cfg: &Config, input: &HookInput) {
@@ -143,5 +148,5 @@ async fn handle_notification(cfg: &Config, input: &HookInput) {
     let title = format!("Claude Code {label}");
     let message = input.message.as_deref().unwrap_or("需要您的操作");
     let client = config::build_http_client(&cfg.proxy);
-    dispatch(cfg, &client, &title, message, None, None).await;
+    dispatch(cfg, &client, &title, message, None, None, "Notification", input.notification_type.as_deref()).await;
 }
