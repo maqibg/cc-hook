@@ -102,7 +102,7 @@ impl Config {
             ai_api_key: env_or("AI_API_KEY", ""),
             ai_base_url: env_or("AI_BASE_URL", "https://api.deepseek.com"),
             ai_model: env_or("AI_MODEL", "deepseek-chat"),
-            ai_max_words: env_or("AI_MAX_WORDS", "100").parse().unwrap_or(100),
+            ai_max_words: env_or("AI_MAX_WORDS", "500").parse().unwrap_or(500),
             win_notify_enable: env_or("WIN_NOTIFY_ENABLE", "true") != "false",
             channels: parse_channels(),
         };

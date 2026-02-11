@@ -59,7 +59,7 @@ cp .env.example target/release/.env
 | `AI_API_KEY` | API Key | - |
 | `AI_BASE_URL` | API 地址 | `https://api.deepseek.com` |
 | `AI_MODEL` | 模型名 | `deepseek-chat` |
-| `AI_MAX_WORDS` | 摘要最大字数 | `100` |
+| `AI_MAX_WORDS` | 摘要最大字数 | `500` |
 | `WIN_NOTIFY_ENABLE` | Windows 桌面通知 | `true` |
 
 渠道配置使用前缀索引，可配多个实例：
