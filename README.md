@@ -16,18 +16,18 @@ Claude Code Hook 通知系统 — 单 .exe，零依赖，冷启动 ~5ms。
 **方式一：下载 Release**
 
 1. 从 [Releases](https://github.com/maqibg/cc-hook/releases) 下载 `cc-hook-windows-x64.zip`
-2. 解压得到 `cc-hook.exe` 和 `.env.example`
-3. 将 `.env.example` 重命名为 `.env`，填入实际配置
+2. 解压得到 `cc-hook.exe` 和 `notifications.example.json`
+3. 将 `notifications.example.json` 复制为 `notifications.json`，填入实际配置
 4. 在 `~/.claude/settings.json` 中添加 hooks 配置（见下方）
 
 **方式二：源码编译**
 
-```bash
+```powershell
 git clone https://github.com/maqibg/cc-hook.git
-cd cc-hook
+Set-Location cc-hook
 cargo build --release
-cp .env.example target/release/.env
-# 编辑 target/release/.env 填入实际配置
+Copy-Item notifications.example.json target/release/notifications.json
+# 编辑 target/release/notifications.json 填入实际配置
 ```
 
 ## settings.json 配置
@@ -54,7 +54,15 @@ cp .env.example target/release/.env
 
 ## .env 配置
 
-`.env` 文件放在 exe 同目录，详见 `.env.example`。
+新版配置使用 `notifications.json`，放在 exe 同目录；模板为 `notifications.example.json`。
+
+新版配置存在时不会读取 `.env`。旧 `.env` 仍可继续使用，但仅在没有 `notifications.json` 时生效。
+
+新版远程通知的总开关 `enabled` 和 Telegram/飞书/AI 各自开关默认关闭；本地桌面通知和语音由 `local` 独立控制。`message.include_raw` 默认关闭，避免把完整 assistant 输出发送到远程渠道。
+
+Telegram、飞书和 AI 可以分别设置 `proxy_url`、`timeout_ms`，每个渠道支持多个实例。AI 只对 `complete` 事件生成摘要，异常时自动使用本地摘要；单个远程实例失败不影响其他实例或 Claude Code。
+
+旧版 `.env` 配置说明仍见 `.env.example`。
 
 **基础配置：**
 
@@ -107,8 +115,13 @@ FS_1_WEBHOOK_URL=<飞书群自定义机器人 Webhook URL>
 
 ```
 src/
-├── main.rs              # 入口（读 stdin → 分发事件）
-├── config.rs            # 配置解析（.env + 多实例渠道）
+├── main.rs              # Claude hook adapter、计时与 transcript 读取
+├── config.rs            # notifications.json + 旧 .env 兼容
+├── config_types.rs      # 配置 schema 与默认值
+├── legacy_config.rs     # 旧 .env 迁移解析
+├── event.rs             # 统一事件与消息模型
+├── http.rs              # HTTP client 与安全响应解析
+├── notification.rs      # 本地/远程分发与结果汇总
 ├── summarizer.rs        # AI 摘要 + 本地降级
 └── channels/
     ├── mod.rs
@@ -121,9 +134,12 @@ src/
 
 设置 `DEBUG=true` 查看详细日志：
 
-```bash
-echo '{"session_id":"test","hook_event_name":"Notification","message":"测试"}' | DEBUG=true ./cc-hook.exe
+```powershell
+$env:DEBUG = 'true'
+'{"session_id":"test","hook_event_name":"Notification","message":"测试"}' | & .\cc-hook.exe
 ```
+
+通知配置 schema 和远程发送语义参考了 HelloAGENTS；详见 `NOTICE`。
 
 - **Telegram 不工作** — 检查 `HTTPS_PROXY`、Token、Chat ID，确认已给 Bot 发过消息
 - **AI 摘要不工作** — 检查 `AI_API_KEY` 和 `AI_BASE_URL`，失败会自动降级本地摘要

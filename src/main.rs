@@ -1,10 +1,19 @@
-mod config;
-mod summarizer;
 mod channels;
+mod config;
+mod config_types;
+mod event;
+mod http;
+mod legacy_config;
+mod notification;
+mod summarizer;
 
 use config::Config;
-use std::io::Read;
+use event::{EventKind, NotificationRequest, source_label};
+use std::io::{Read, Seek, SeekFrom};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const HOOK_TIMEOUT_SECS: u64 = 10;
+const TRANSCRIPT_TAIL_BYTES: u64 = 1024 * 1024;
 
 #[derive(serde::Deserialize)]
 struct HookInput {
@@ -13,100 +22,135 @@ struct HookInput {
     transcript_path: Option<String>,
     notification_type: Option<String>,
     message: Option<String>,
+    cwd: Option<String>,
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn timer_dir() -> std::path::PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".claude").join("cc-hook-timers")
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".claude")
+        .join("cc-hook-timers")
 }
 
 fn extract_last_assistant(path: &str) -> String {
-    let Ok(content) = std::fs::read_to_string(path) else { return String::new() };
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let Ok(length) = file.metadata().map(|metadata| metadata.len()) else {
+        return String::new();
+    };
+    let start = length.saturating_sub(TRANSCRIPT_TAIL_BYTES);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return String::new();
+    }
+    let mut bytes = Vec::new();
+    if file.read_to_end(&mut bytes).is_err() {
+        return String::new();
+    }
+    let mut content = String::from_utf8_lossy(&bytes).into_owned();
+    if start > 0
+        && let Some(index) = content.find('\n')
+    {
+        content = content[index + 1..].to_string();
+    }
     for line in content.lines().rev() {
         let line = line.trim();
-        if line.is_empty() { continue; }
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
-        if v.get("type").and_then(|t| t.as_str()) != Some("assistant") { continue; }
-        let Some(contents) = v.pointer("/message/content").and_then(|c| c.as_array()) else { continue };
-        let texts: Vec<&str> = contents.iter()
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(contents) = v.pointer("/message/content").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        let texts: Vec<&str> = contents
+            .iter()
             .filter(|c| c.get("type").and_then(|t| t.as_str()) == Some("text"))
             .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
             .collect();
-        if !texts.is_empty() { return texts.join("\n"); }
+        if !texts.is_empty() {
+            return texts.join("\n");
+        }
     }
     String::new()
 }
 
 fn get_duration(session_id: &str) -> Option<u64> {
-    let file = timer_dir().join(session_id);
-    let start: u64 = std::fs::read_to_string(file).ok()?.trim().parse().ok()?;
-    Some(now_secs() - start)
+    let file = timer_dir().join(timer_file_name(session_id));
+    let start: u64 = std::fs::read_to_string(&file).ok()?.trim().parse().ok()?;
+    let _ = std::fs::remove_file(file);
+    Some(now_secs().saturating_sub(start))
 }
 
 fn save_timer(session_id: &str) {
     let dir = timer_dir();
     let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(dir.join(session_id), now_secs().to_string());
+    let _ = std::fs::write(
+        dir.join(timer_file_name(session_id)),
+        now_secs().to_string(),
+    );
 }
 
-fn now_time_str() -> String {
-    let total = now_secs() + 8 * 3600; // UTC+8
-    let h = (total % 86400) / 3600;
-    let m = (total % 3600) / 60;
-    format!("{:02}:{:02}", h, m)
-}
-
-async fn dispatch(cfg: &Config, client: &reqwest::Client, title: &str, summary: &str, raw: Option<&str>, extra: Option<&str>, event: &str, notification_type: Option<&str>) {
-    let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
-
-    if cfg.win_notify_enable {
-        let t = title.to_string();
-        let s = summary.to_string();
-        let voice_cfg = cfg.clone();
-        let ev = event.to_string();
-        let nt = notification_type.map(|s| s.to_string());
-        tasks.push(tokio::spawn(async move {
-            channels::windows::notify(&t, &s);
-            channels::windows::speak(&voice_cfg, &ev, nt.as_deref());
-        }));
+fn timer_file_name(session_id: &str) -> String {
+    let sanitized: String = session_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() {
+        "unknown".to_string()
+    } else {
+        sanitized
     }
-
-    for ch in &cfg.channels {
-        let client = client.clone();
-        let t = title.to_string();
-        let s = summary.to_string();
-        let r = raw.map(|s| s.to_string());
-        let e = extra.map(|s| s.to_string());
-        let ch = ch.clone();
-        tasks.push(tokio::spawn(async move {
-            let result = match ch.ch_type.as_str() {
-                "telegram" => channels::telegram::send(&client, &ch, &t, &s, r.as_deref(), e.as_deref()).await,
-                "feishu" => channels::feishu::send(&client, &ch, &t, &s, r.as_deref(), e.as_deref()).await,
-                _ => Ok(()),
-            };
-            if let Err(e) = result { eprintln!("[cc-hook] {} {} 失败: {}", ch.ch_type, ch.name, e); }
-        }));
-    }
-
-    for t in tasks { let _ = t.await; }
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let result = tokio::time::timeout(std::time::Duration::from_secs(10), run()).await;
-    if result.is_err() { eprintln!("[cc-hook] 超时退出"); }
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(HOOK_TIMEOUT_SECS), run()).await;
+    if result.is_err() {
+        eprintln!("[cc-hook] 超时退出");
+    }
 }
 
 async fn run() {
     let mut raw = String::new();
-    if std::io::stdin().read_to_string(&mut raw).is_err() || raw.trim().is_empty() { return; }
-    let Ok(input) = serde_json::from_str::<HookInput>(&raw) else { return };
+    if std::io::stdin().read_to_string(&mut raw).is_err() || raw.trim().is_empty() {
+        return;
+    }
+    let Ok(input) = serde_json::from_str::<HookInput>(&raw) else {
+        return;
+    };
 
-    let cfg = Config::load();
-    if cfg.debug { eprintln!("[cc-hook] 事件: {}, 会话: {}", input.hook_event_name, input.session_id); }
+    let cfg = match Config::load("任务完成") {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("[cc-hook] {error}");
+            return;
+        }
+    };
+    if cfg.debug {
+        eprintln!(
+            "[cc-hook] 事件: {}, 会话: {}",
+            input.hook_event_name, input.session_id
+        );
+    }
 
     match input.hook_event_name.as_str() {
         "UserPromptSubmit" => save_timer(&input.session_id),
@@ -118,36 +162,104 @@ async fn run() {
 
 async fn handle_stop(cfg: &Config, input: &HookInput) {
     let duration = get_duration(&input.session_id);
-    if cfg.min_duration > 0 {
-        if let Some(d) = duration {
-            if d < cfg.min_duration { return; }
-        }
+    if cfg.min_duration_seconds > 0
+        && let Some(duration) = duration
+        && duration < cfg.min_duration_seconds
+    {
+        return;
     }
 
-    let content = input.transcript_path.as_deref().map(extract_last_assistant).unwrap_or_default();
-    if content.is_empty() { return; }
+    let content = input
+        .transcript_path
+        .as_deref()
+        .map(extract_last_assistant)
+        .unwrap_or_default();
+    if content.is_empty() {
+        return;
+    }
 
-    let proxy_client = config::build_http_client(&cfg.proxy);
-    let ai_client = config::build_http_client("");
-    let summary = summarizer::generate(cfg, &ai_client, &content).await;
-    let title = format!("Claude Code 完成 ({})", now_time_str());
+    let source = source_label("Claude Code", input.cwd.as_deref(), Some(&input.session_id));
+    let title = format!("{source} · 任务完成");
     let extra = duration.map(|d| format!("耗时 {}s", d));
-    // 原始输出截取前 500 字符
-    let raw: String = content.trim().chars().take(500).collect();
-    dispatch(cfg, &proxy_client, &title, &summary, Some(&raw), extra.as_deref(), "Stop", None).await;
+    let report = notification::dispatch(
+        cfg,
+        NotificationRequest {
+            event: EventKind::Complete,
+            title,
+            content,
+            extra,
+        },
+    )
+    .await;
+    if cfg.debug {
+        eprintln!(
+            "[cc-hook] remote sent={}, failed={}, skipped={}",
+            report.sent, report.failed, report.skipped
+        );
+    }
 }
 
 async fn handle_notification(cfg: &Config, input: &HookInput) {
-    let label = match input.notification_type.as_deref() {
-        Some("permission_prompt") => "权限请求",
-        Some("idle_prompt") => "等待输入",
-        Some("auth_success") => "认证成功",
-        Some("elicitation_dialog") => "MCP 输入",
-        Some(other) => other,
-        None => "通知",
+    let (event, label) = match input.notification_type.as_deref() {
+        Some("permission_prompt") => (EventKind::Confirm, "权限请求"),
+        Some("idle_prompt") => (EventKind::Idle, "等待输入"),
+        Some("auth_success") => (EventKind::Confirm, "认证成功"),
+        Some("elicitation_dialog") => (EventKind::Elicitation, "MCP 输入"),
+        Some(_) | None => (EventKind::Confirm, "通知"),
     };
-    let title = format!("Claude Code {label}");
+    let source = source_label("Claude Code", input.cwd.as_deref(), Some(&input.session_id));
+    let title = format!("{source} · {label}");
     let message = input.message.as_deref().unwrap_or("需要您的操作");
-    let client = config::build_http_client(&cfg.proxy);
-    dispatch(cfg, &client, &title, message, None, None, "Notification", input.notification_type.as_deref()).await;
+    let report = notification::dispatch(
+        cfg,
+        NotificationRequest {
+            event,
+            title,
+            content: message.to_string(),
+            extra: None,
+        },
+    )
+    .await;
+    if cfg.debug {
+        eprintln!(
+            "[cc-hook] remote sent={}, failed={}, skipped={}",
+            report.sent, report.failed, report.skipped
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn timer_file_name_cannot_escape_timer_directory() {
+        assert_eq!(timer_file_name("../session/path"), "___session_path");
+    }
+
+    #[test]
+    fn transcript_reader_returns_last_assistant_text() {
+        let path =
+            std::env::temp_dir().join(format!("cc-hook-transcript-{}.jsonl", std::process::id()));
+        let mut file = std::fs::File::create(&path).unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"first"}}]}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"user","message":{{"content":"ignored"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"last"}}]}}}}"#
+        )
+        .unwrap();
+        drop(file);
+        assert_eq!(extract_last_assistant(path.to_str().unwrap()), "last");
+        let _ = std::fs::remove_file(path);
+    }
 }
