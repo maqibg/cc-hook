@@ -39,6 +39,7 @@ pub fn from_legacy_env(complete_voice: &str) -> Config {
         events: EventConfig {
             complete: env_bool("EVENT_COMPLETE", true),
             confirm: env_bool("EVENT_CONFIRM", true),
+            idle: env_bool("EVENT_IDLE", true),
             warning: env_bool("EVENT_WARNING", true),
         },
         message: MessageConfig {

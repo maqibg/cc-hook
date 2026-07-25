@@ -138,15 +138,26 @@ mod tests {
     }
 
     #[test]
-    fn event_switch_maps_waiting_events_to_confirm() {
+    fn idle_switch_is_independent_and_elicitation_follows_confirm() {
         let events = EventConfig {
             complete: true,
             confirm: false,
+            idle: false,
             warning: true,
         };
         assert!(!events.enabled_for(EventKind::Idle));
         assert!(!events.enabled_for(EventKind::Elicitation));
         assert!(events.enabled_for(EventKind::Warning));
+
+        let events = EventConfig {
+            complete: true,
+            confirm: true,
+            idle: false,
+            warning: true,
+        };
+        assert!(!events.enabled_for(EventKind::Idle));
+        assert!(events.enabled_for(EventKind::Confirm));
+        assert!(events.enabled_for(EventKind::Elicitation));
     }
 
     #[test]

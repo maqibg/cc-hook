@@ -72,7 +72,8 @@ AI 只对任务完成事件生成摘要，异常时自动使用本地摘要；�
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `EVENT_COMPLETE` | 发送任务完成事件 | `true` |
-| `EVENT_CONFIRM` | 发送权限确认、等待输入等事件 | `true` |
+| `EVENT_CONFIRM` | 发送权限确认、MCP 输入等事件 | `true` |
+| `EVENT_IDLE` | 发送等待输入（空闲提醒）事件 | `true` |
 | `EVENT_WARNING` | 发送警告事件 | `true` |
 | `MESSAGE_INCLUDE_RAW` | 在远程通知中附带原始输出 | `false` |
 | `MESSAGE_RAW_MAX_CHARS` | 原始输出字符上限 | `500` |

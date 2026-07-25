@@ -37,6 +37,7 @@ pub struct VoiceMessages {
 pub struct EventConfig {
     pub complete: bool,
     pub confirm: bool,
+    pub idle: bool,
     pub warning: bool,
 }
 
@@ -131,6 +132,7 @@ impl Default for EventConfig {
         Self {
             complete: true,
             confirm: true,
+            idle: true,
             warning: true,
         }
     }
@@ -141,7 +143,8 @@ impl EventConfig {
         match event {
             EventKind::Complete => self.complete,
             EventKind::Warning => self.warning,
-            EventKind::Confirm | EventKind::Idle | EventKind::Elicitation => self.confirm,
+            EventKind::Idle => self.idle,
+            EventKind::Confirm | EventKind::Elicitation => self.confirm,
         }
     }
 }
