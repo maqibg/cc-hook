@@ -161,11 +161,15 @@ async fn run() {
 }
 
 async fn handle_stop(cfg: &Config, input: &HookInput) {
-    let duration = get_duration(&input.session_id);
-    if cfg.min_duration_seconds > 0
-        && let Some(duration) = duration
-        && duration < cfg.min_duration_seconds
-    {
+    // 计时文件由 UserPromptSubmit 写入；缺失说明本轮并非用户输入发起
+    // （如后台子代理/后台任务完成后的自动唤醒轮），跳过所有通知
+    let Some(duration) = get_duration(&input.session_id) else {
+        if cfg.debug {
+            eprintln!("[cc-hook] 非用户轮（无计时文件），跳过通知");
+        }
+        return;
+    };
+    if cfg.min_duration_seconds > 0 && duration < cfg.min_duration_seconds {
         return;
     }
 
@@ -180,7 +184,7 @@ async fn handle_stop(cfg: &Config, input: &HookInput) {
 
     let source = source_label("Claude Code", input.cwd.as_deref(), Some(&input.session_id));
     let title = format!("{source} · 任务完成");
-    let extra = duration.map(|d| format!("耗时 {}s", d));
+    let extra = Some(format!("耗时 {duration}s"));
     let report = notification::dispatch(
         cfg,
         NotificationRequest {
