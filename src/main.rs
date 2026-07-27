@@ -12,7 +12,8 @@ use event::{EventKind, NotificationRequest, source_label};
 use std::io::{Read, Seek, SeekFrom};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const HOOK_TIMEOUT_SECS: u64 = 10;
+// 需大于 AI_TIMEOUT_MS 与渠道超时之和，否则 AI 还没返回整个进程就被砍掉
+const HOOK_TIMEOUT_SECS: u64 = 200;
 const TRANSCRIPT_TAIL_BYTES: u64 = 1024 * 1024;
 
 #[derive(serde::Deserialize)]

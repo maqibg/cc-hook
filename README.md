@@ -9,7 +9,7 @@ Claude Code Hook 通知系统 — 单 .exe，零依赖，冷启动 ~5ms。
 - **语音播报** — Windows TTS，不同事件不同语音，文本可自定义
 - **多实例** — 可同时配置多个 Telegram 和飞书实例
 - **代理支持** — HTTP / SOCKS5
-- **10 秒超时保护** — 不会阻塞 Claude Code
+- **超时保护** — 进程上限 200 秒，避免卡死 Claude Code
 
 ## 快速开始
 
@@ -51,6 +51,12 @@ Copy-Item .env.example target/release/.env
 | `Stop` | 任务完成 | AI 摘要 + 全渠道通知 + 语音"任务完成" |
 | `Notification` | 权限请求/等待输入 | 全渠道通知 + 对应语音播报 |
 | `UserPromptSubmit` | 用户发送消息 | 记录时间戳（用于计算耗时） |
+
+Claude Code 对 hook 的默认超时是 60 秒。如果 AI 模型响应较慢（`AI_TIMEOUT_MS` 设得比 60000 大），需要给 `Stop` 补上 `timeout` 字段，单位为秒，否则进程会被提前杀掉、退回本地摘要：
+
+```json
+"Stop": [{"hooks": [{"type": "command", "command": "/path/to/cc-hook.exe", "timeout": 210}]}]
+```
 
 ## .env 配置
 
